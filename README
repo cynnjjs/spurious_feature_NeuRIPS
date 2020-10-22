@@ -1,0 +1,21 @@
+Commands to reproduce Figure 6 (Colored MNIST experiment):
+python PseudoLabel_MNIST.py --train_S True --train_T True --cor_prob 0.95
+python PseudoLabel_MNIST.py --train_S True --train_T True --cor_prob 0.97
+
+Commands to reproduce Figure 7 (Interpolation between pseudolabeling and entropy minimization):
+python PseudoLabel_MNIST.py --train_S True --pseudolabel True --num_rounds 3
+python PseudoLabel_MNIST.py --pseudolabel True --num_rounds 6
+python PseudoLabel_MNIST.py --pseudolabel True --num_rounds 30
+
+Commands to reproduce Figure 8 (Gaussian mixture experiment):
+python3 PseudoLabel_Gaussian.py entropy_min
+python3 PseudoLabel_Gaussian.py pseudolabel
+
+Commands for CelebA experiment:
+python process_data.py
+python PseudoLabel_celebA.py --target_w 0 --n_epoch 300
+python PseudoLabel_celebA.py --resume --target_w 1 --n_epoch 400
+
+Computational Resource:
+For CelebA, 1 NVIDIA GPU: Source training 20min, source + target training 22min.
+All other experiments were run on Macbook Pro and computation time was negligible.

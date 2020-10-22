@@ -11,8 +11,8 @@ import torch.nn.functional as F
 from torch import nn, optim
 import pickle
 import shutil, os
-from util import save_ckp, load_ckp, vat_loss
 import matplotlib.pylab as pylab
+import argparse
 
 params = {'legend.fontsize': 'xx-large',
          'axes.labelsize': 'xx-large',
@@ -71,18 +71,6 @@ def construct_MNIST_dataset(noise_type, cor_prob, n_way):
     S_test_images = S_images[num_S_train:num_S_tot]
     S_test_labels = S_labels[num_S_train:num_S_tot]
 
-    # Comment out below
-    # Display images only works for 3 channels
-    """
-    figure = plt.figure()
-    num_of_images = 60
-    for index in range(1, num_of_images + 1):
-        plt.subplot(6, 10, index)
-        plt.axis('off')
-        plt.imshow(images[index].numpy())
-    plt.show()
-    """
-
     testset = datasets.MNIST('PATH_TO_STORE_TRAINSET', download=False, train=False, transform=transform)
     T_train_images = trainset.data[-num_T_train:].float() / 255.0
     T_test_images = testset.data[:num_T_test].float() / 255.0
@@ -90,14 +78,10 @@ def construct_MNIST_dataset(noise_type, cor_prob, n_way):
     # Binary Version:
     if (n_way==2):
         T_test_labels = (T_test_labels < 5).long()
-    # Use random color for Target
-    # Uniform random between 0 and 1 to avoid clustering around colors
-    #colors = torch.randint(0, 10, (testset.data.shape[0], 1)).float() / 10.0
 
     colors_train = get_colors(num_T_train, noise_type)
     colors_test = get_colors(num_T_test, noise_type)
 
-    #T_images = torch.stack([images*colors, images*(1-colors), torch.zeros_like(images)], dim=-1) # 3-channel for demo
     T_train_images = torch.stack([T_train_images*colors_train, T_train_images*(1-colors_train)], dim=-1) # 2-channel
     T_test_images = torch.stack([T_test_images*colors_test, T_test_images*(1-colors_test)], dim=-1) # 2-channel
 
@@ -151,7 +135,6 @@ def acc_On_Target(model):
 def train_Source(loss_fn_choice):
     criterion = nn.CrossEntropyLoss()
     softmax_layer = nn.Softmax(dim=1)
-    # Default: 0.003, 0.9, 0.002
     optimizer = optim.SGD(model.parameters(), lr=0.03, momentum=0.9, weight_decay=0.002)
     time0 = time()
     if (loss_fn_choice=='Mixed'):
@@ -309,7 +292,6 @@ def finetune_Target(loss_fn_choice):
             loss_entropy = torch.mean(torch.sum(- torch.log(output) * output, 1))
             loss_sqrt = torch.mean(torch.exp(-torch.sqrt(torch.abs(logits[:, 0]-logits[:, 1]))))
             loss_exp = torch.mean(torch.exp(-torch.abs(logits[:, 0]-logits[:, 1])))
-            #print('batch', b, 'loss_exp', loss_exp.detach().numpy(), 'loss_entropy', loss_entropy.detach().numpy())
             loss_entropy_rec.append(loss_entropy.item())
             loss_exp_rec.append(loss_exp.item())
             loss_sqrt_rec.append(loss_sqrt.item())
@@ -326,46 +308,23 @@ def finetune_Target(loss_fn_choice):
             running_loss += loss.item()
         print("Epoch {} - Training loss: {}".format(e, running_loss/num_batches))
 
-        violation = vio_Pdo_Label(model)
-        vio_rec.append(violation)
         t_acc, t_los = acc_On_Target(model)
         target_acc.append(t_acc)
         if t_acc > best_acc:
             best_model = pickle.loads(pickle.dumps(model))
 
-        if (violation > vio_threshold):
+        if (t_acc < 0.69 and e == 49):
             break;
     print("\nTraining Time (in minutes) =",(time()-time0)/60)
 
     plt.figure(1)
-    #plt.subplot(231)
     plt.plot(target_acc)
     plt.hlines(ori_target_acc, 0, 20, label='Source Classifier Accuracy '+str(round(ori_target_acc, 2)))
     plt.xlabel('Training Epochs')
     plt.ylabel('Target Accuracy')
     ind_max = np.argmax(target_acc)
     val_max = max(target_acc)
-    #plt.hlines(val_max, ind_max-10, ind_max+10, label='Max Accuracy '+str(round(val_max,2)))
     plt.legend()
-    plt.show()
-
-    plt.figure(2)
-    """
-    plt.subplot(232)
-    plt.plot(vio_rec)
-    plt.xlabel('Epochs')
-    plt.ylabel('% Violation of Pseudolabels')
-    plt.subplot(233)
-    """
-    plt.plot(loss_exp_rec)
-    plt.xlabel('Training Epochs')
-    plt.ylabel('Train Exponential Loss')
-    plt.show()
-
-    plt.figure(3)
-    plt.plot(loss_entropy_rec)
-    plt.xlabel('Training Epochs')
-    plt.ylabel('Train Entropy Loss')
     plt.show()
 
     return best_model
@@ -397,7 +356,6 @@ def plot_mu(model):
     # Make histogram
     # Calculate avg activations before softmax_layer
     mu_rec = (torch.gather(output_mu, 1, torch.ones_like(true_label)) - torch.gather(output_mu, 1, torch.zeros_like(true_label))).numpy()
-    #mu_rec = (torch.gather(output_mu, 1, true_label) - torch.gather(output_mu, 1, 1-true_label)).numpy()
     mean_act = np.mean(mu_rec)
     std_act = np.std(mu_rec)
 
@@ -405,38 +363,39 @@ def plot_mu(model):
     plt.hist(mu_rec, normed=True, bins=100)
     plt.ylabel('Probability')
     plt.ylim(0, 0.3)
-    #plt.vlines(mean_act, 0, 0.15, colors='m', linestyles='solid', label='Mean of Mean Activations '+str(mean_act))
-    #plt.hlines(0.075, mean_act-std_act, mean_act+std_act, colors='r', linestyles='solid', label='Std of Activations '+str(std_act))
     plt.xlabel('Mean activations')
     plt.xlim(-15, 15)
-    #plt.legend()
     plt.show()
 
 # ============ Main algorithm below ============
-dataset = 'MNIST' # Choose from 'MNIST', 'CelebA'
+parser = argparse.ArgumentParser()
+parser.add_argument("--cor_prob", default=0.95, help="spurious correlation with label in Source")
+parser.add_argument("--train_S", default=False, help="train on source flag")
+parser.add_argument("--train_T", default=False, help="train on target flag")
+parser.add_argument("--pseudolabel", default=False, help="pseudolabeling_flag")
+parser.add_argument("--num_rounds", default=3, help="number of pseudolabeling rounds")
+args = parser.parse_args()
 
-if dataset == 'MNIST':
-    n_way = 10 # Choose from 2, 10
-    input_size = 784 * 2 # Color is relative ratio between 2 channels
-    num_S_train = 20000 # These come from traditional trainset
-    num_S_test = 10000
-    num_T_train = 30000
-    num_T_test = 10000 # This comes from traditional testset
-    noise_type = 'Uniform' # Choose from 'Uniform' for 10, 'Gaussian' for binary
-    cor_prob = 0.95 # Spurious correlation with label in Source
-    model_type = '3-layer' # Choose from '3-layer', 'Linear'
-    plot_mu_dist = False
-    count_statistics = False
-    train_S = True
-    train_T = False
-    pseudolabeling_flag = False
-    save_pathS = 'S_classifier10_95%.pt'
-    save_pathT = 'T_classifier10_95%.pt'
-    S_train_images, S_train_labels, S_test_images, S_test_labels, T_train_images, T_test_images, T_test_labels = \
-        construct_MNIST_dataset(noise_type=noise_type, cor_prob=cor_prob, n_way=n_way)
-    model = get_model(model_type=model_type, input_size=input_size, output_size=n_way)
-else:
-    print('Dataset Error')
+n_way = 10 # Choose from 2, 10
+input_size = 784 * 2 # Color is relative ratio between 2 channels
+num_S_train = 20000 # These come from traditional trainset
+num_S_test = 10000
+num_T_train = 30000
+num_T_test = 10000 # This comes from traditional testset
+noise_type = 'Uniform' # Choose from 'Uniform' for 10, 'Gaussian' for binary
+cor_prob = float(args.cor_prob)
+model_type = '3-layer' # Choose from '3-layer', 'Linear'
+plot_mu_dist = False
+count_statistics = False
+train_S = args.train_S
+train_T = args.train_T
+pseudolabeling_flag = args.pseudolabel
+save_pathS = 'S_classifier.pt'
+save_pathT = 'T_classifier.pt'
+S_train_images, S_train_labels, S_test_images, S_test_labels, T_train_images, T_test_images, T_test_labels = \
+    construct_MNIST_dataset(noise_type=noise_type, cor_prob=cor_prob, n_way=n_way)
+model = get_model(model_type=model_type, input_size=input_size, output_size=n_way)
+
 
 # Choose from Source_only, Mixed
 if train_S:
@@ -537,12 +496,11 @@ if count_statistics:
 
 
 # Alternative Algorithm: Retrain target using pseudo-labels
-def pseudolabeling(model):
+def pseudolabeling(model, num_rounds):
     ori_target_acc = acc_On_Target(model)[0]
     criterion = nn.CrossEntropyLoss()
     time0 = time()
-    num_rounds = 30 # number of pseudolabeling rounds, update teacher after each round
-    epochs = 10 # number of batches per round to train student
+    epochs = 300/num_rounds # number of batches per round to train student
     batch_size = 30000
     target_acc = []
     # Reinitialize model
@@ -578,26 +536,15 @@ def pseudolabeling(model):
     print("\nTraining Time (in minutes) =",(time()-time0)/60)
 
     plt.figure(1)
-    #plt.subplot(211)
     plt.plot(target_acc)
     plt.hlines(ori_target_acc, 0, 20, label='Source Classifier Accuracy '+str(round(ori_target_acc, 2)))
     plt.xlabel('Total Epochs')
     plt.ylabel('Target Accuracy')
-    #ind_min = np.argmin(target_acc)
-    #val_min = min(target_acc)
     ind_max = np.argmax(target_acc)
     val_max = max(target_acc)
-    #plt.hlines(ori_target_acc, 0, epochs)
-    #plt.hlines(val_min, ind_min-10, ind_min+10, label='Min Acc '+str(val_min))
     plt.hlines(val_max, ind_max-10, ind_max+10, label='Max Acc '+str(round(val_max,2)))
     plt.legend()
-    #plt.subplot(212)
-    #plt.plot(vio_rec, label = 'Violation of Pseudolabels')
-    #plt.ylabel('% Violation of Pseudolabels')
-    #plt.xlabel('Epochs')
-    #plt.legend()
     plt.show()
-    #plt.savefig('6rounds_50epochs.png')
 
 if pseudolabeling_flag:
-    pseudolabeling(model)
+    pseudolabeling(model, int(args.num_rounds))

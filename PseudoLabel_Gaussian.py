@@ -5,6 +5,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import StepLR
 import matplotlib.pylab as pylab
+import sys
 
 params = {'legend.fontsize': 'x-large',
          'axes.labelsize': 'x-large',
@@ -16,8 +17,14 @@ pylab.rcParams.update(params)
 np.random.seed(0)
 torch.manual_seed(42)
 
-train_Source = False
-entropy_Min = True
+train_Source = True
+
+# Choose from 'entropy_min', 'pseudolabel'
+algo = sys.argv[1]
+if (algo=='entropy_min'):
+    entropy_Min = True
+else:
+    entropy_Min = False
 
 n_T = 10000
 n_S = 10000
@@ -25,7 +32,7 @@ d1 = 2 # x1 feature dimension
 d2 = 2 # x2 feature dimension
 sigma1 = 1 # x1 standard deviation
 sigma2 = 1 # x2 standard deviation
-x1_type = '2Mixture' # choose from '2Mixture', 'Spherical'
+x1_type = '2Mixture'
 
 c_len = 2 # length of mean of 2 mixtures for x1
 thr = 0.1 # Pseudolabeling cutoff
@@ -161,11 +168,8 @@ if entropy_Min:
     lr = 1e-3 # learning rate
     n_epochs = 10000 # number of GD steps
     optimizer = optim.SGD([w_T], lr=lr, weight_decay=0)
-    #scheduler = StepLR(optimizer, step_size=10000, gamma=0.7)
 
     for iter in range(n_epochs):
-        # Decay Learning Rate
-        #scheduler.step()
 
         # Create a new batch of Target Domain Training Data
         Y_T_train = torch.Tensor(n_T, 1).random_(0, 2)
@@ -232,16 +236,6 @@ if entropy_Min:
     axs[1].set(xlabel = 'Training epochs')
     axs[1].set(ylabel = 'Spurious coefficients')
     axs[1].legend()
-    """
-    axs[2].plot(vio_plot, label='Violation of Pseudolabels')
-    axs[2].set(xlabel = 'epochs')
-    axs[2].set(ylabel = 'Violation of Pseudolabels')
-    axs[3].plot(train_ent_plot, label='Target train entropy')
-    axs[3].plot(test_ent_plot, label='Target test entropy')
-    axs[3].set(xlabel = 'epochs')
-    axs[3].set(ylabel = 'Entropy')
-    axs[3].legend()
-    """
     plt.show()
 
 else:
@@ -255,7 +249,6 @@ else:
 
     # Teacher classifier for each round
     w_T_hat = w_S_hat.clone().detach()
-    # hack: start with round 5:
     w_T = w_T_hat
     w_T.requires_grad = True
 
@@ -264,23 +257,10 @@ else:
     spu_2_plot = []
 
     # Reinitialize student classifier
-    """
-    w_T = torch.randn(d1+d2, requires_grad=True, dtype=torch.float, device='cpu')
-    while (w_T[d1].detach().numpy() < 0):
-        w_T = torch.randn(d1+d2, requires_grad=True, dtype=torch.float, device='cpu')
-    """
     optimizer = optim.SGD([w_T], lr=lr, weight_decay=0)
 
     for r in range(num_rounds):
-        """
-        # Reinitialize student classifier
-        w_T = torch.randn(d1+d2, requires_grad=True, dtype=torch.float, device='cpu')
-        while (w_T[d1].detach().numpy() < 0):
-            w_T = torch.randn(d1+d2, requires_grad=True, dtype=torch.float, device='cpu')
 
-        optimizer = optim.SGD([w_T], lr=lr, weight_decay=0)
-        #scheduler = StepLR(optimizer, step_size=1000, gamma=0.9)
-        """
         # Create a new batch of Target Domain Training Data
         Y_T_train = torch.Tensor(n_T, 1).random_(0, 2)
         X_T_1 = torch.empty(n_T, d1).normal_(mean=0,std=sigma1)
@@ -299,10 +279,8 @@ else:
                 Y_T_pdo.append((np.sign(Y_pdo_pred[i])+1)/2)
         X_T_train = torch.Tensor(X_T_train)
         Y_T_pdo = torch.Tensor(Y_T_pdo)
-        #print('Number of training target examples after filtering =', Y_T_pdo.shape)
 
         for epoch in range(n_epochs):
-            #scheduler.step()
 
             optimizer.zero_grad()
             yhat = torch.matmul(X_T_train, w_T)
@@ -327,11 +305,9 @@ else:
                 spu_1_plot.append(w_T.detach().numpy()[d1])
                 if (d2>1):
                     spu_2_plot.append(w_T.detach().numpy()[d1+1])
-                #train_loss_plot.append(loss.item())
-                #test_ent_plot.append(test_ent.item())
 
         w_T_hat = w_T.clone().detach()
-        #print('Round: ', r, 'w_T_hat = ', w_T_hat)
+
         # Target test accuracy
         Y_T_test_pred = ((torch.sign(torch.matmul(X_T_test, w_T))+1)/2).reshape(n_T, 1).detach().numpy()
         acc_real = 1-np.float(np.count_nonzero(Y_T_test_pred != Y_T_test)) / n_T
